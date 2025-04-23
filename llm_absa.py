@@ -6,6 +6,7 @@
 import argparse
 import datasets
 import json
+import logging
 import os
 import pandas as pd
 import re
@@ -28,6 +29,7 @@ parser.add_argument("--do_sample", action=argparse.BooleanOptionalAction, defaul
 parser.add_argument("--temperature", type=float, default=0.6, help="Temperature for sampling")
 parser.add_argument("--top_p", type=float, default=0.9, help="Top-p sampling probability")
 parser.add_argument("--skip_existing", action=argparse.BooleanOptionalAction, default=False, help="Skip existing results")
+parser.add_argument("--max_length", type=int, default=128, help="Maximum length of the input sequence")
 parser.set_defaults(json_format=True)
 parser.set_defaults(do_sample=True)
 parser.set_defaults(skip_existing=False)
@@ -35,9 +37,13 @@ config = parser.parse_args()
 
 
 def format_message(example):
+    review = example["review"]
+    if len(review.split()) > config.max_length:
+        review = " ".join(review.split()[:config.max_length])
+
     example["messages"] = [
         {"role": "system", "content": system_prompt + examples[config.domain]},
-        {"role": "user", "content": "Now analyze the following review: " + example["review"]}
+        {"role": "user", "content": "Now analyze the following review: " + review}
     ]
     return example
 
@@ -52,7 +58,14 @@ def extract_json_from_output(text):
     return None
 
 
+def empty_cache():
+    with torch.no_grad():
+        torch.cuda.empty_cache()
+
+
 def main():
+    logging.basicConfig(level=logging.INFO)
+
     if config.domain not in examples:
         config.domain = "restaurant"
 
@@ -77,17 +90,18 @@ def main():
     fmt = "json" if config.json_format else "csv"
     dataset = datasets.load_dataset(fmt, data_files={"train": config.dataset_path}, split="train", streaming=True)
     if os.path.exists(absa_path) and config.skip_existing:
-        print(f"[INFO] Skipping existing results in {absa_path}")
-        print("Before skipping: ", next(iter(dataset)))
+        logging.info(f"Skipping existing results in {absa_path}")
+        logging.info(f"Before skipping: {next(iter(dataset))}")
         df = pd.read_csv(absa_path)
         length = len(df)
         dataset = dataset.skip(length)
-        print("After skipping: ", next(iter(dataset)))
+        logging.info(f"After skipping: {next(iter(dataset))}")
     else:
-        print(f"[INFO] No existing results found in {absa_path}")
+        logging.info(f"No existing results found in {absa_path}")
         
     if config.json_format: # JSON (Amazon Reviews)
-        dataset = dataset.rename_colums({"parent_asin": "item_id", "text": "review"})
+        dataset = dataset.rename_column("parent_asin", "item_id")
+        dataset = dataset.rename_column("text", "review")
     dataset = dataset.map(format_message)
 
     batch_dataset = dataset.batch(batch_size=config.batch_size)
@@ -95,9 +109,9 @@ def main():
         with open(os.path.join(config.output_dir, "state_dict.json"), "r") as f:
             state_dict = json.load(f)
         batch_dataset.load_state_dict(state_dict)
-        print(f"[INFO] Loading state dict from {os.path.join(config.output_dir, 'state_dict.json')}")
+        logging.info(f"Loading state dict from {os.path.join(config.output_dir, 'state_dict.json')}")
     else:
-        print(f"[INFO] No state dict found!")
+        logging.info(f"No state dict found!")
 
     for batch in batch_dataset:
         start = time.time()
@@ -110,7 +124,7 @@ def main():
             top_p=config.top_p,
         )
         end = time.time()
-        print(f"Batch processed in {end - start:.2f} seconds")
+        logging.info(f"Batch processed in {end - start:.2f} seconds")
         raw_outputs = [out[0]["generated_text"][-1]["content"] for out in outputs]
         json_outputs = [extract_json_from_output(raw) for raw in raw_outputs]
          
@@ -122,6 +136,8 @@ def main():
         state_dict = batch_dataset.state_dict()
         with open(os.path.join(config.output_dir, "state_dict.json"), "w") as f:
             json.dump(state_dict, f)
+
+        empty_cache()
         
 
 if __name__ == "__main__":
