@@ -7,35 +7,24 @@
 import argparse
 import ast
 import json
+import logging
 import numpy as np
 import os
 import pandas as pd
 
-from collections import defaultdict
-from sklearn.cluster import AgglomerativeClustering
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, util
 from tqdm import tqdm
 
-
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset_path", type=str)
-parser.add_argument("--output_dir", type=str)
-parser.add_argument("--cluster_algo", type=str, default="Agglomerative") # "Agglomerative""
-parser.add_argument("--distance_threshold", type=float, default=0.4)
-parser.add_argument("--num_threads", type=int, default=4)
+parser.add_argument("--dataset_path", type=str, default="")
+parser.add_argument("--output_dir", type=str, default="")
+parser.add_argument("--batch_size", type=int, default=64)
+parser.add_argument("--threshold", type=float, default=0.6)
+parser.add_argument("--min_community_size", type=int, default=5)
 config = parser.parse_args()
-config.cluster_algo = config.cluster_algo.lower()
 
 
-def os_environ(num_threads=4):
-    os.environ["OMP_NUM_THREADS"] = f"{num_threads}"
-    os.environ["OPENBLAS_NUM_THREADS"] = f"{num_threads}"
-    os.environ["MKL_NUM_THREADS"] = f"{num_threads}"
-    os.environ["VECLIB_MAXIMUM_THREADS"] = f"{num_threads}"
-    os.environ["NUMEXPR_NUM_THREADS"] = f"{num_threads}"
-
-
-def count(data_df):
+def count(data_df, config):
     if os.path.exists(os.path.join(config.output_dir, "aspects.json")):
         print(f"[INFO] Loading aspects from {os.path.join(config.output_dir, 'aspects.json')}")
         with open(os.path.join(config.output_dir, "aspects.json"), "r") as f:
@@ -43,7 +32,7 @@ def count(data_df):
         print("[INFO] Loaded aspects")
     
     aspects = {}
-    for sample in tqdm(data_df["json_results"], desc="Count", total=len(data_df)):
+    for sample in tqdm(data_df["absa"], desc="Count", total=len(data_df)):
         try:
             entry = ast.literal_eval(sample)
         except:
@@ -64,7 +53,7 @@ def count(data_df):
     return sorted_aspects
 
 
-def embed(aspects):
+def embed(aspects, config):
     model = SentenceTransformer('all-MiniLM-L6-v2')
     aspect_names = list(aspects.keys())
     
@@ -74,103 +63,74 @@ def embed(aspects):
         aspect_embeddings = np.load(os.path.join(config.output_dir, "embeddings.npy"))
         print("[INFO] Loaded embeddings")
     else:
-        aspect_embeddings = model.encode(aspect_names, normalize_embeddings=True)
+        aspect_embeddings = model.encode(aspect_names, normalize_embeddings=True, batch_size=config.batch_size, show_progress_bar=True)
         np.save(os.path.join(config.output_dir, "embeddings.npy"), aspect_embeddings)
     print("[End] Embedding aspects")
+    print(f"[INFO] Embeddings saved to {os.path.join(config.output_dir, 'embeddings.npy')}")
+
+    return aspect_embeddings
+
+
+def clustering(aspects, aspect_embeddings, config):
+    cluster_id_path = os.path.join(config.output_dir, f"aspect_clusters_ids_{config.threshold}_{config.min_community_size}.json")
+    if os.path.exists(cluster_id_path):
+        print(f"[INFO] Loading clusters ids from {cluster_id_path}")
+        with open(cluster_id_path, "r") as f:
+            clusters_ids = json.load(f)
+        print("[INFO] Loaded  clusters ids")
     
-    print("[Start] Calculating similarities")
-    if os.path.exists(os.path.join(config.output_dir, "similarities.npy")):
-        print(f"[INFO] Loading similarities from {os.path.join(config.output_dir, 'similarities.npy')}")
-        aspect_similarities = np.load(os.path.join(config.output_dir, "similarities.npy"))
-        print("[INFO] Loaded similarities")
     else:
-        aspect_similarities = model.similarity(aspect_embeddings, aspect_embeddings)
-        print(f"[INFO] Saving similarities to {os.path.join(config.output_dir, 'similarities.npy')}")
-        np.save(os.path.join(config.output_dir, "similarities.npy"), aspect_similarities)
-        print(f"[INFO] Similarities saved to {os.path.join(config.output_dir, 'similarities.npy')}")
-    print("[End] Calculating similarities")
-    
-    return aspect_embeddings, aspect_similarities
-
-    
-def agglomerative_clustering(aspect_similarities, distance_threshold=0.4):
-    clustering = AgglomerativeClustering(
-        n_clusters=None,
-        metric='precomputed',
-        linkage='average',
-        distance_threshold=distance_threshold
-    )
-    labels = clustering.fit_predict(-aspect_similarities + 1)
-    return labels
-
-
-#def hdbscan_clustering(aspect_embeddings, min_cluster_size=1, min_samples=1):
-#    clusterer = HDBSCAN(
-#        metric='euclidean',
-#       min_cluster_size=min_cluster_size,
-#        min_samples=min_samples,
-#    )
-#    labels = clusterer.fit_predict(aspect_embeddings)
-#    return labels
-
-
-def clustering(aspect_similarities, distance_threshold=0.4):
-    if os.path.exists(os.path.join(config.output_dir, f"{config.cluster_algo}_labels.npy")):
-        labels = np.load(os.path.join(config.output_dir, f"{config.cluster_algo}_labels.npy"))
-        return labels
-    
-    if config.cluster_algo == "agglomerative":
         print("[Start] Agglomerative Clustering")
-        labels = agglomerative_clustering(aspect_similarities, distance_threshold)
+        clusters_ids = util.community_detection(
+            embeddings=aspect_embeddings,
+            threshold=config.threshold,
+            min_community_size=config.min_community_size,
+            batch_size=config.batch_size,
+            show_progress_bar=True,
+        )
         print("[End] Agglomerative Clustering")
-    else:
-#        labels = hdbscan_clustering(aspect_embeddings, min_cluster_size, min_samples)
-        raise ValueError(f"Unknown clustering algorithm: {config.cluster_algo}")
-    print(f"[INFO] Saving labels to {os.path.join(config.output_dir, f'{config.cluster_algo}_labels.npy')}")
-    np.save(os.path.join(config.output_dir, f"{config.cluster_algo}_labels.npy"), labels)
-    print(f"[INFO] Labels saved to {os.path.join(config.output_dir, f'{config.cluster_algo}_labels.npy')}")
-    return labels
+    
+        print(f"[INFO] Saving  clusters ids to {cluster_id_path}")
+        with open(cluster_id_path, "w") as f:
+            json.dump(clusters_ids, f, indent=4)
+        print(f"[INFO] Labels  clusters ids to {cluster_id_path}")
 
-
-def group_aspects(aspects, labels):
-    if os.path.exists(os.path.join(config.output_dir, f"{config.cluster_algo}_clusters.json")):
-        print(f"[INFO] Loading clusters from {os.path.join(config.output_dir, f'{config.cluster_algo}_clusters.json')}")
-        with open(os.path.join(config.output_dir, f"{config.cluster_algo}_clusters.json"), "r") as f:
-            return json.load(f)
+    cluster_path = os.path.join(config.output_dir, f"aspect_clusters_{config.threshold}_{config.min_community_size}.json")
+    if os.path.exists(cluster_path):
+        print(f"[INFO] Loading clusters from {cluster_path}")
+        with open(cluster_path, "r") as f:
+            clusters = json.load(f)
         print("[INFO] Loaded clusters")
+
+    else:
+        aspect_names = list(aspects.keys())
+        clusters = {}
+        for cluster_id, cluster in enumerate(clusters_ids):
+            cluster_aspects = [aspect_names[i] for i in cluster]
+            cluster_aspects = sorted(cluster_aspects, key=lambda t: -aspects[t])
+            total_count = sum(aspects[t] for t in cluster_aspects)
+            cluster_name = cluster_aspects[0]
+            clusters[cluster_name] = {
+                "total_count": total_count,
+                "aspects": cluster_aspects
+            }
+
+        clusters_tmp = dict(sorted(clusters.items(), key=lambda x: -x[1]["total_count"]))
+        clusters = {"clusters": clusters_tmp, "total_count": len(clusters_tmp)}
+        print(f"[INFO] Saving clusters to {cluster_path}")
+        with open(cluster_path, "w") as f:
+            json.dump(clusters, f, indent=4)
+        print(f"[INFO] Clusters saved to {cluster_path}")
         
-    aspect_names = list(aspects.keys())
-    cluster_map = defaultdict(list)
-    for idx, label in enumerate(labels):
-        if label == -1:
-            continue
-        cluster_map[label].append(aspect_names[idx])
-
-    grouped_aspects = {}
-    for group_id, terms in tqdm(cluster_map.items(), desc="Group Aspects", total=len(cluster_map)):
-        terms_sorted = sorted(terms, key=lambda t: -aspects[t])
-        total_count = sum(aspects[t] for t in terms)
-        representative = terms_sorted[0]
-        grouped_aspects[representative] = {
-            "aspects": terms_sorted,
-            "total_count": total_count
-        }
-
-    grouped_aspects = dict(sorted(grouped_aspects.items(), key=lambda x: -x[1]["total_count"]))
-    cluster_path = os.path.join(config.output_dir, f"{config.cluster_algo}_clusters.json")
-    print(f"[INFO] Saving clusters to {cluster_path}")
-    with open(cluster_path, "w") as f:
-        json.dump(grouped_aspects, f, indent=4)
-    print(f"[INFO] Clusters saved to {cluster_path}")
-
-    return grouped_aspects
+    return clusters_ids, clusters
 
 
 if __name__ == "__main__":
-    os_environ(config.num_threads)
     os.makedirs(config.output_dir, exist_ok=True)
-    data_df = pd.read_csv(config.dataset_path)
-    aspects = count(data_df)
-    _, aspect_similarities = embed(aspects)
-    labels = clustering(aspect_similarities, config.distance_threshold)
-    group_aspects(aspects, labels)
+    data_df = None
+    if config.dataset_path != "":
+        data_df = pd.read_csv(config.dataset_path)
+    aspects = count(data_df, config)
+    aspect_embeddings = embed(aspects, config)
+    clusters_ids, clusters = clustering(aspects, aspect_embeddings, config)
+    print("[INFO] Clustering completed")
