@@ -81,7 +81,7 @@ def clustering(aspects, aspect_embeddings, config):
         logging.info(f"Loading clusters ids from {cluster_id_path}")
         with open(cluster_id_path, "r") as f:
             clusters_ids = json.load(f)
-        logging.info("Loaded  clusters ids")
+        logging.info("Loaded clusters ids")
     
     else:
         logging.info("[Start] Agglomerative Clustering")
@@ -94,10 +94,10 @@ def clustering(aspects, aspect_embeddings, config):
         )
         logging.info("[End] Agglomerative Clustering")
     
-        logging.info(f"Saving  clusters ids to {cluster_id_path}")
+        logging.info(f"Saving clusters ids to {cluster_id_path}")
         with open(cluster_id_path, "w") as f:
             json.dump(clusters_ids, f, indent=4)
-        logging.info(f"Labels  clusters ids to {cluster_id_path}")
+        logging.info(f"Labels clusters ids to {cluster_id_path}")
 
     cluster_path = os.path.join(config.output_dir, f"aspect_clusters_{config.threshold}_{config.min_community_size}.json")
     if os.path.exists(cluster_path):
