@@ -21,7 +21,7 @@ parser = argparse.ArgumentParser(description="LLaMA 3 for Statement Extraction a
 parser.add_argument("--model", type=str, default="llama3/Meta-Llama-3-8B-Instruct", help="Model path")
 parser.add_argument("--domain", type=str, default="restaurant", help="Domain for sentiment analysis")
 parser.add_argument("--dataset_path", type=str, default="dataset/restaurant.csv", help="Dataset for sentiment analysis")
-parser.add_argument("--json_format", action=argparse.BooleanOptionalAction, default=True, help="Dataset format")
+parser.add_argument("--format", type=str, default="amz14", choices=["amz14",], help="Format of the dataset")
 parser.add_argument("--output_dir", type=str, default="dataset/", help="Output path for results")
 parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
 parser.add_argument("--max_new_tokens", type=int, default=512, help="Maximum new tokens")
@@ -34,6 +34,17 @@ parser.set_defaults(json_format=True)
 parser.set_defaults(do_sample=True)
 parser.set_defaults(skip_existing=False)
 config = parser.parse_args()
+
+
+AMAZON_2014_ENTRIES = {
+    "overall": "rating",
+    "unixReviewTime": "timestamp",
+    "reviewText": "review",
+    "reviewerName": "user_name",
+    "reviewerID": "user_id",
+    "asin": "item_id",
+    "summary": "review_title",
+}
 
 
 def format_message(example):
@@ -99,9 +110,9 @@ def main():
     else:
         logging.info(f"No existing results found in {absa_path}")
         
-    if config.json_format: # JSON (Amazon Reviews)
-        dataset = dataset.rename_column("parent_asin", "item_id")
-        dataset = dataset.rename_column("text", "review")
+    if config.format == "amz14": # (Amazon Reviews 2014)
+        for key, value in AMAZON_2014_ENTRIES.items():
+            dataset = dataset.rename_column(key, value)
     dataset = dataset.map(format_message)
 
     batch_dataset = dataset.batch(batch_size=config.batch_size)

@@ -18,6 +18,7 @@ from tqdm import tqdm
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset_path", type=str, default="")
 parser.add_argument("--output_dir", type=str, default="")
+parser.add_argument("--model_name", type=str, default="sentence-transformers/sentence-t5-base")
 parser.add_argument("--batch_size", type=int, default=64)
 parser.add_argument("--threshold", type=float, default=0.6)
 parser.add_argument("--min_community_size", type=int, default=5)
@@ -54,7 +55,7 @@ def count(data_df, config):
 
 
 def embed(aspects, config):
-    model = SentenceTransformer('all-MiniLM-L6-v2')
+    model = SentenceTransformer(config.model_name)
     aspect_names = list(aspects.keys())
     
     print("[Start] Embedding aspects")

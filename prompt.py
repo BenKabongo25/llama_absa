@@ -165,4 +165,52 @@ Output:
   	}
 ]
 """,
+
+	"cellphone": """
+Input review:
+"The battery life was impressive, but the camera quality was disappointing. The design was sleek."
+
+Output:
+[
+  	{
+		"statement": "The battery life was impressive.",
+		"aspect": "battery life",
+		"sentiment": "positive"
+  	},
+  	{
+		"statement": "The camera quality was disappointing.",
+		"aspect": "camera quality",
+		"sentiment": "negative"
+  	},
+  	{
+		"statement": "The design was sleek.",
+		"aspect": "design",
+		"sentiment": "positive"
+  	}
+]
+""",
+
+	"clothes": """
+Input review:
+"The fabric was soft, but the fit was off. The color was vibrant."
+
+Output:
+[
+  	{
+		"statement": "The fabric was soft.",
+		"aspect": "fabric",
+		"sentiment": "positive"
+  	},
+  	{
+		"statement": "The fit was off.",
+		"aspect": "fit",
+		"sentiment": "negative"
+  	},
+  	{
+		"statement": "The color was vibrant.",
+		"aspect": "color",
+		"sentiment": "positive"
+  	}
+]
+""",
 }
