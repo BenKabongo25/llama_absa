@@ -11,6 +11,7 @@ import logging
 import numpy as np
 import os
 import pandas as pd
+import torch
 
 from sentence_transformers import SentenceTransformer, util
 from tqdm import tqdm
@@ -19,7 +20,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--dataset_path", type=str, default="")
 parser.add_argument("--output_dir", type=str, default="")
 parser.add_argument("--model_name", type=str, default="sentence-transformers/sentence-t5-base")
-parser.add_argument("--batch_size", type=int, default=64)
+parser.add_argument("--batch_size", type=int, default=32)
 parser.add_argument("--threshold", type=float, default=0.6)
 parser.add_argument("--min_community_size", type=int, default=5)
 config = parser.parse_args()
@@ -55,19 +56,22 @@ def count(data_df, config):
 
 
 def embed(aspects, config):
-    model = SentenceTransformer(config.model_name)
-    aspect_names = list(aspects.keys())
-    embedding_path = os.path.join(config.output_dir, "embeddings.json")
-    
+    embedding_path = os.path.join(config.output_dir, "embeddings.npy")
     logging.info("[Start] Embedding aspects")
+
     if os.path.exists(embedding_path):
         logging.info(f"Loading embeddings from {embedding_path}")
         aspect_embeddings = np.load(embedding_path)
         logging.info("Loaded embeddings")
+    
     else:
-        aspect_embeddings = model.encode(
-            aspect_names, normalize_embeddings=True, batch_size=config.batch_size, show_progress_bar=True
-        )
+        aspect_names = list(aspects.keys())
+        model = SentenceTransformer(config.model_name)
+        model.eval()
+        with torch.no_grad():
+            aspect_embeddings = model.encode(
+                aspect_names, normalize_embeddings=True, batch_size=config.batch_size, show_progress_bar=True
+            )
         np.save(embedding_path, aspect_embeddings)
         logging.info(f"Embeddings saved to {embedding_path}")
     logging.info("[End] Embedding aspects")
@@ -76,7 +80,9 @@ def embed(aspects, config):
 
 
 def clustering(aspects, aspect_embeddings, config):
-    cluster_id_path = os.path.join(config.output_dir, f"aspect_clusters_ids_{config.threshold}_{config.min_community_size}.json")
+    cluster_id_path = os.path.join(
+        config.output_dir, f"aspect_clusters_ids_{config.threshold}_{config.min_community_size}.json"
+    )
     if os.path.exists(cluster_id_path):
         logging.info(f"Loading clusters ids from {cluster_id_path}")
         with open(cluster_id_path, "r") as f:
@@ -85,6 +91,7 @@ def clustering(aspects, aspect_embeddings, config):
     
     else:
         logging.info("[Start] Agglomerative Clustering")
+        aspect_embeddings = aspect_embeddings.astype("float16")
         clusters_ids = util.community_detection(
             embeddings=aspect_embeddings,
             threshold=config.threshold,
@@ -99,7 +106,9 @@ def clustering(aspects, aspect_embeddings, config):
             json.dump(clusters_ids, f, indent=4)
         logging.info(f"Labels clusters ids to {cluster_id_path}")
 
-    cluster_path = os.path.join(config.output_dir, f"aspect_clusters_{config.threshold}_{config.min_community_size}.json")
+    cluster_path = os.path.join(
+        config.output_dir, f"aspect_clusters_{config.threshold}_{config.min_community_size}.json"
+    )
     if os.path.exists(cluster_path):
         logging.info(f"Loading clusters from {cluster_path}")
         with open(cluster_path, "r") as f:
