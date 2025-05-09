@@ -23,6 +23,7 @@ parser.add_argument("--model_name", type=str, default="sentence-transformers/sen
 parser.add_argument("--batch_size", type=int, default=32)
 parser.add_argument("--threshold", type=float, default=0.6)
 parser.add_argument("--min_community_size", type=int, default=5)
+parser.add_argument("--stop_words_path", type=str, default="")
 config = parser.parse_args()
 
 
@@ -33,6 +34,11 @@ def count(data_df, config):
         with open(count_path, "r") as f:
             return json.load(f)
         logging.info("Loaded aspects")
+
+    stopwords = ["product", "overall"]
+    if config.stop_words_path and os.path.exists(config.stop_words_path):
+        with open(config.stop_words_path, "r") as f:
+            stopwords = json.load(f)
     
     aspects = {}
     for sample in tqdm(data_df["absa"], desc="Count", total=len(data_df)):
@@ -43,9 +49,11 @@ def count(data_df, config):
         else:
             for entry_item in entry:
                 aspect = entry_item.get("aspect")
-                if aspect:
-                    aspect = aspect.lower().strip()
-                    aspects[aspect] = aspects.get(aspect, 0) + 1    
+                if not aspect: continue
+                aspect = str(aspect).lower().strip()
+                aspect = (" ".join([word for word in aspect.split() if word not in stopwords])).strip()
+                if not aspect: continue
+                aspects[aspect] = aspects.get(aspect, 0) + 1    
         
     sorted_aspects = dict(sorted(aspects.items(), key=lambda item: item[1], reverse=True))
     logging.info(f"Saving aspects to {count_path}")
@@ -134,6 +142,25 @@ def clustering(aspects, aspect_embeddings, config):
         with open(cluster_path, "w") as f:
             json.dump(clusters, f, indent=4)
         logging.info(f"Clusters saved to {cluster_path}")
+
+    mapping_path = os.path.join(
+        config.output_dir, f"aspect_clusters_mapping_{config.threshold}_{config.min_community_size}.json"
+    )
+    if os.path.exists(mapping_path):
+        logging.info(f"Loading mapping from {mapping_path}")
+        with open(mapping_path, "r") as f:
+            mapping = json.load(f)
+        logging.info("Loaded mapping")
+
+    else:
+        mapping = {}
+        for cluster_id, cluster in enumerate(clusters):
+            for aspect_id in cluster:
+                mapping[aspect_id] = cluster_id
+        logging.info(f"Saving mapping to {mapping_path}")
+        with open(mapping_path, "w") as f:
+            json.dump(mapping, f, indent=4)
+        logging.info(f"Mapping saved to {mapping_path}")
 
     logging.info(f"Number of clusters: {len(clusters)}")
     logging.info("Clustering completed")
